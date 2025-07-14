@@ -1,17 +1,19 @@
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 import datetime
+import os
+import json
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 
 # 🔐 Token do bota Telegram
 TOKEN = "8149438916:AAERXz-gzOy8aPOhBQVCU88Q8EMe_6WMuZs"
 
-# 🔐 Autoryzacja do Google Sheets
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-credentials = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-client = gspread.authorize(credentials)
-sheet = client.open("RekrutacjaSharryBot").sheet1  # nazwa arkusza Google
+# 🔐 Autoryzacja do Google Sheets (z ENV)
+creds_dict = json.loads(os.environ["GOOGLE_CREDS_JSON"])
+creds = Credentials.from_service_account_info(creds_dict)
+client = gspread.authorize(creds)
+sheet = client.open("RekrutacjaSharryBot").sheet1
 
 # 🔍 Słowa kluczowe
 NEGATIVE_KEYWORDS = ["ні", "нет", "нецікаво", "ni", "net", "no"]
