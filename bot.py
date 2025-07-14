@@ -1,17 +1,26 @@
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 import datetime
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
+# 🔐 Token do bota Telegram
 TOKEN = "8149438916:AAERXz-gzOy8aPOhBQVCU88Q8EMe_6WMuZs"
 
-# Słowa kluczowe
+# 🔐 Autoryzacja do Google Sheets
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+credentials = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+client = gspread.authorize(credentials)
+sheet = client.open("RekrutacjaSharryBot").sheet1  # nazwa arkusza Google
+
+# 🔍 Słowa kluczowe
 NEGATIVE_KEYWORDS = ["ні", "нет", "нецікаво", "ni", "net", "no"]
 POSITIVE_KEYWORDS = ["так", "да", "цікаво", "tak", "da", "yes"]
 
-# Stany użytkowników
+# 📌 Stany użytkowników
 user_states = {}
 
-# Treści wiadomości
+# 📩 Wiadomości
 INITIAL_MESSAGE = """Добрий день 
 Дякуємо за контакт та інтерес до вакансії.
 
@@ -54,11 +63,10 @@ QUESTIONS = """Чудово! 😊 Тоді пропоную трохи ближ�
 FINAL_REPLY = """Дякуємо за ваші відповіді. Ви дуже цікавий кандидат :)
 Якщо ви хочете отримати доступ до навчальних матеріалів, щоб краще зрозуміти, чи підходить вам ця робота, така можливість є. Для цього необхідно підписати угоду про конфіденційність. Якщо ви зацікавлені, надішліть відповідний запит на адресу hr@sharry.eu."""
 
-# 🔸 Zapis odpowiedzi do pliku
+# 🟨 Zapis odpowiedzi do arkusza Google
 def log_user_response(user_id, username, text):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open("responses.csv", "a", encoding="utf-8") as file:
-        file.write(f"{now},{user_id},{username},{text}\n")
+    sheet.append_row([now, str(user_id), username or "-", text])
 
 # 🔹 Komenda /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -70,34 +78,29 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.lower()
-    username = update.effective_user.username or "-"
+    username = update.effective_user.username
 
-    # Logowanie każdej wiadomości
     log_user_response(user_id, username, text)
-
     state = user_states.get(user_id, "initial")
 
-    # Etap 1: powitalna
     if state == "initial":
-        if any(word in text for word in NEGATIVE_KEYWORDS):
+        if any(w in text for w in NEGATIVE_KEYWORDS):
             await update.message.reply_text(NEGATIVE_REPLY)
             user_states[user_id] = "end"
-        elif any(word in text for word in POSITIVE_KEYWORDS):
+        elif any(w in text for w in POSITIVE_KEYWORDS):
             await update.message.reply_text(JOB_DESCRIPTION)
             user_states[user_id] = "job_sent"
         return
 
-    # Etap 2: po opisie pracy
     if state == "job_sent":
-        if any(word in text for word in NEGATIVE_KEYWORDS):
+        if any(w in text for w in NEGATIVE_KEYWORDS):
             await update.message.reply_text(NEGATIVE_REPLY)
             user_states[user_id] = "end"
-        elif any(word in text for word in POSITIVE_KEYWORDS):
+        elif any(w in text for w in POSITIVE_KEYWORDS):
             await update.message.reply_text(QUESTIONS)
             user_states[user_id] = "questions_sent"
         return
 
-    # Etap 3: po pytaniach
     if state == "questions_sent":
         await update.message.reply_text(FINAL_REPLY)
         user_states[user_id] = "end"
