@@ -1,16 +1,14 @@
 from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 
 TOKEN = "8149438916:AAERXz-gzOy8aPOhBQVCU88Q8EMe_6WMuZs"
 
-# Kluczowe słowa
 NEGATIVE_KEYWORDS = ["ні", "нет", "нецікаво"]
 POSITIVE_KEYWORDS = ["так", "да", "цікаво"]
-
-# Śledzenie etapów dla każdego użytkownika
 user_states = {}
 
-# Wiadomości
+WELCOME_MESSAGE = """Доброго дня! Ми – Sharry.eu. Наш сайт - це сервіс з бронювання квитків на міжнародні пасажирські перевезення та міжєвропейські напрямки. Як я можу допомогти?"""
+
 INITIAL_REPLY = """Добрий день
 Дякуємо за контакт та інтерес до вакансії.
 
@@ -32,22 +30,29 @@ JOB_DESCRIPTION = """Ваша основна роль буде полягати 
 - Інформування пасажирів про умови рейсу.
 - Надсилання електронних квитків пасажирам.
 - Робота з панеллю резервування в кабінеті диспетчера.
-- Обслуговування інфолінії."""
+- Обслуговування інфолінії.
+
+Чи було б це для вас цікаво?"""
 
 FINAL_REPLY = "Ми готові вас навчити. Для того, щоб отримати доступ до навчальних матеріалів, будь ласка, надішліть документ, що посвідчує вашу особу, на пошту hr@sharry.eu"
 
-# Obsługa wiadomości
+# Obsługa komendy /start
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_states[user_id] = "initial"
+    await update.message.reply_text(WELCOME_MESSAGE)
+    await update.message.reply_text(INITIAL_REPLY)
+
+# Obsługa pozostałych wiadomości
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.lower()
 
-    # Pierwszy kontakt
     if user_id not in user_states:
         user_states[user_id] = "initial"
         await update.message.reply_text(INITIAL_REPLY)
         return
 
-    # Etap 1: pytanie o zainteresowanie
     if user_states[user_id] == "initial":
         if any(word in text for word in NEGATIVE_KEYWORDS):
             await update.message.reply_text(NEGATIVE_REPLY)
@@ -57,7 +62,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_states[user_id] = "job_sent"
         return
 
-    # Etap 2: po opisie pracy
     if user_states[user_id] == "job_sent":
         if any(word in text for word in NEGATIVE_KEYWORDS):
             await update.message.reply_text(NEGATIVE_REPLY)
@@ -67,9 +71,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_states[user_id] = "end"
         return
 
-# Uruchomienie bota
+# Uruchomienie aplikacji
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("🤖 RekrutacjaSharryBot działa...")
     app.run_polling()
