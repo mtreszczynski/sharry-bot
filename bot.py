@@ -15,7 +15,7 @@ from telegram.ext import (
 TOKEN = os.environ["TELEGRAM_TOKEN"]  # ustaw w Render: Environment → TELEGRAM_TOKEN
 
 # ── GOOGLE SHEETS ───────────────────────────────────────────────────────────
-GOOGLE_SECRET_FILE = "/etc/secrets/GOOGLE_CREDENTIALS"  # Secret Files → GOOGLE_CREDENTIALS
+GOOGLE_SECRET_FILE = "/etc/secrets/GOOGLE_CREDENTIALS"  # w Render: Secret Files → nazwa pliku GOOGLE_CREDENTIALS
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
@@ -27,9 +27,7 @@ sheet = client.open("RekrutacjaSharryBot").sheet1
 # ── REKRUTACJA ─────────────────────────────────────────────────────────────
 NEGATIVE_KEYWORDS = ["ні", "нет", "нецікаво", "ni", "net", "no"]
 POSITIVE_KEYWORDS = ["так", "да", "цікаво", "tak", "da", "yes"]
-
-# Sesje trzymają stan rozmowy: 'stage' i, ewentualnie, 'q_index' dla pytań
-user_sessions = {}
+user_states = {}
 
 INITIAL_MESSAGE = """\
 Добрий день 
@@ -50,29 +48,38 @@ NEGATIVE_REPLY = (
 )
 
 JOB_DESCRIPTION = """\
-Ваша основна роль буде полягати в опрацюванні вхідних запитів, дзвінків та повідомлень...
-(pełny tekst opisu — wklej swój)
-Чи буде це для вас цікаво?
+Ваша основна роль буде полягати в опрацюванні вхідних запитів, дзвінків та повідомлень, пов'язаних із пошуком поїздок та бронюванням місць.
+Самостійно шукати пасажирів Вам НЕ потрібно, ми так не працюємо, пасажири самі приходять на наш сайт. Також важливо, що для роботи необхідний власний комп'ютер, з телефону працювати не можна.!
+
+Робота включатиме:
+-Обробку замовлень, які надходять на наш сайт, де пасажири бронюють квитки на автобуси та буси.
+-Зв'язок із пасажирами для підтвердження їх замовлень у системі.
+-Інформування пасажирів про умови рейсу.
+-Надсилання електронних квитків пасажирам.
+-Робота з панеллю резервування в кабінеті диспетчера.
+-Обслуговування інфолінії.
+
+Чи буде це для вас цікаво?"""
+
+QUESTIONS = """\
+Чудово! Тоді пропоную трохи ближче познайомитись. Розкажіть, будь ласка, кілька слів про себе, а також дайте відповіді на короткі запитання нижче — і ми домовимось про телефонну розмову:
+
+1. Звідки Ви? (місто)
+2. Ваш вік
+3. Освіта (спеціальність)
+4. Ваш досвід роботи:
+5. Чи мали Ви досвід віддаленої роботи?
+6. Чи працювали з CRM-системами?
+7. Чи мали досвід з телефонією або кол-центрами (дзвінки, IP-телефонія)?
+8. Чи маєте  доступ до комп’ютера/ноутбуку та стабільного інтернету?  (робота з телефону неможлива!)
+9. Скільки годин можете приділяти роботі?
+10. В який час (день/вечір/ніч) Вам зручніше працювати?
+11. Номер телефону, за яким наш співробітник може зателефонувати, щоб обговорити деталі.
 """
 
-# lista pojedynczych pytań
-QUESTIONS_LIST = [
-    "1️⃣ Звідки Ви? (місто)",
-    "2️⃣ Ваш вік",
-    "3️⃣ Освіта (спеціальність)",
-    "4️⃣ Ваш досвід роботи",
-    "5️⃣ Чи мали Ви досвід віддаленої роботи? (так/ні)",
-    "6️⃣ Чи працювали з CRM-системами? (так/ні)",
-    "7️⃣ Чи мали досвід з телефонією або кол-центрами? (так/ні)",
-    "8️⃣ Чи маєте доступ до комп’ютера/ноутбуку та стабільного інтернету?",
-    "9️⃣ Скільки годин можете приділяти роботі на добу?",
-    "🔟 В який час (день/вечір/ніч) Вам зручніше працювати?",
-    "1️⃣1️⃣ Номер телефону, за яким ми можемо зателефонувати:"
-]
-
 FINAL_REPLY = """\
-Дякуємо за ваші відповіді! 🎉
-Якщо ви хочете отримати доступ до навчальних матеріалів, будь ласка, надішліть запит на hr@sharry.eu.
+Дякуємо за ваші відповіді. Ви дуже цікавий кандидат
+Якщо ви хочете отримати доступ до навчальних матеріалів, щоб краще зрозуміти, чи підходить вам ця робота, така можливість є. Для цього необхідно підписати угоду про конфіденційність. Якщо ви зацікавлені, надішліть відповідний запит на адресу hr@sharry.eu.
 """
 
 def log_user_response(user_id: int, username: str, text: str):
@@ -81,75 +88,45 @@ def log_user_response(user_id: int, username: str, text: str):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    # inicjalizacja sesji
-    user_sessions[uid] = {"stage": "initial"}
+    user_states[uid] = "initial"
     await update.message.reply_text(INITIAL_MESSAGE)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    text = update.message.text.strip().lower()
+    text = update.message.text.lower()
     username = update.effective_user.username or "-"
-    log_user_response(uid, username, update.message.text)
+    log_user_response(uid, username, text)
 
-    sess = user_sessions.get(uid)
-    if not sess:
-        # ktoś pisze bez /start
-        user_sessions[uid] = {"stage": "initial"}
-        await update.message.reply_text("Proszę rozpocząć od /start")
-        return
-
-    stage = sess["stage"]
-
-    # etap wstępny
-    if stage == "initial":
+    state = user_states.get(uid, "initial")
+    if state == "initial":
         if any(w in text for w in NEGATIVE_KEYWORDS):
             await update.message.reply_text(NEGATIVE_REPLY)
-            sess["stage"] = "end"
+            user_states[uid] = "end"
         elif any(w in text for w in POSITIVE_KEYWORDS):
             await update.message.reply_text(JOB_DESCRIPTION)
-            sess["stage"] = "job_sent"
-        else:
-            # nie rozumiemy, pytamy jeszcze raz
-            await update.message.reply_text("Proszę odpowiedzieć tak/нет/ні/net/no")
+            user_states[uid] = "job_sent"
         return
 
-    # etap opisu pracy
-    if stage == "job_sent":
+    if state == "job_sent":
         if any(w in text for w in NEGATIVE_KEYWORDS):
             await update.message.reply_text(NEGATIVE_REPLY)
-            sess["stage"] = "end"
+            user_states[uid] = "end"
         elif any(w in text for w in POSITIVE_KEYWORDS):
-            # przechodzimy do zadawania kolejnych pytań
-            sess["stage"] = "asking"
-            sess["q_index"] = 0
-            await update.message.reply_text(QUESTIONS_LIST[0])
-        else:
-            await update.message.reply_text("Proszę odpowiedzieć так/нет/ні/net/no")
+            await update.message.reply_text(QUESTIONS)
+            user_states[uid] = "questions_sent"
         return
 
-    # etap zadawania serii pytań
-    if stage == "asking":
-        idx = sess["q_index"]
-        # przechowujemy odpowiedź (opcjonalnie można wrzucić do listy sess["answers"])
-        idx += 1
-        if idx < len(QUESTIONS_LIST):
-            sess["q_index"] = idx
-            await update.message.reply_text(QUESTIONS_LIST[idx])
-        else:
-            # koniec pytań
-            await update.message.reply_text(FINAL_REPLY)
-            sess["stage"] = "end"
-        return
-
-    # jeśli sesja zakończona, ignorujemy dalsze wiadomości
-    if stage == "end":
+    if state == "questions_sent":
+        await update.message.reply_text(FINAL_REPLY)
+        user_states[uid] = "end"
         return
 
 if __name__ == "__main__":
-    # usuń ewentualny webhook, by nie kolidował z pollingiem
-    tmp = ApplicationBuilder().token(TOKEN).build()
-    tmp.bot.delete_webhook()
+    # 1) Usuń stare webhooki, żeby Telegram nie blokował polling’u
+    tmp_app = ApplicationBuilder().token(TOKEN).build()
+    tmp_app.bot.delete_webhook()
 
+    # 2) Teraz budujemy i uruchamiamy jedną aplikację pollingową
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
