@@ -12,10 +12,10 @@ from telegram.ext import (
 )
 
 # ── TELEGRAM ────────────────────────────────────────────────────────────────
-TOKEN = os.environ["TELEGRAM_TOKEN"]  # ustaw w Render: Environment → TELEGRAM_TOKEN
+TOKEN = os.environ.get("TELEGRAM_TOKEN")  # ustaw w Render: Environment → TELEGRAM_TOKEN
 
 # ── GOOGLE SHEETS ───────────────────────────────────────────────────────────
-GOOGLE_SECRET_FILE = "/etc/secrets/GOOGLE_CREDENTIALS"  # w Render: Secret Files → nazwa pliku GOOGLE_CREDENTIALS
+GOOGLE_SECRET_FILE = "/etc/secrets/GOOGLE_CREDENTIALS"
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
@@ -27,7 +27,7 @@ sheet = client.open("RekrutacjaSharryBot").sheet1
 # ── REKRUTACJA ─────────────────────────────────────────────────────────────
 NEGATIVE_KEYWORDS = ["ні", "нет", "нецікаво", "ni", "net", "no"]
 POSITIVE_KEYWORDS = ["так", "да", "цікаво", "tak", "da", "yes"]
-user_states = {}
+sessions = {}
 
 INITIAL_MESSAGE = """\
 Добрий день 
@@ -61,9 +61,8 @@ JOB_DESCRIPTION = """\
 
 Чи буде це для вас цікаво?"""
 
+# Cały blok pytań zapisany jako multiline, ale podzielimy go na 11 oddzielnych
 QUESTIONS = """\
-Чудово! Тоді пропоную трохи ближче познайомитись. Розкажіть, будь ласка, кілька слів про себе, а також дайте відповіді на короткі запитання нижче — і ми домовимось про телефонну розмову:
-
 1. Звідки Ви? (місто)
 2. Ваш вік
 3. Освіта (спеціальність)
@@ -82,53 +81,73 @@ FINAL_REPLY = """\
 Якщо ви хочете отримати доступ до навчальних матеріалів, щоб краще зрозуміти, чи підходить вам ця робота, така можливість є. Для цього необхідно підписати угоду про конфіденційність. Якщо ви зацікавлені, надішліть відповідний запит на адресу hr@sharry.eu.
 """
 
+# Logowanie do arkusza
+
 def log_user_response(user_id: int, username: str, text: str):
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    sheet.append_row([timestamp, str(user_id), username or "-", text])
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sheet.append_row([now, str(user_id), username or "-", text])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    user_states[uid] = "initial"
+    sessions[uid] = {"stage": "initial"}
     await update.message.reply_text(INITIAL_MESSAGE)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    text = update.message.text.lower()
-    username = update.effective_user.username or "-"
+    text = update.message.text.strip()
+    lower_text = text.lower()
+    username = update.message.from_user.username or "-"
     log_user_response(uid, username, text)
 
-    state = user_states.get(uid, "initial")
-    if state == "initial":
-        if any(w in text for w in NEGATIVE_KEYWORDS):
-            await update.message.reply_text(NEGATIVE_REPLY)
-            user_states[uid] = "end"
-        elif any(w in text for w in POSITIVE_KEYWORDS):
-            await update.message.reply_text(JOB_DESCRIPTION)
-            user_states[uid] = "job_sent"
-        return
+    sess = sessions.get(uid)
+    if not sess:
+        return await update.message.reply_text("Proszę zacząć od /start")
 
-    if state == "job_sent":
-        if any(w in text for w in NEGATIVE_KEYWORDS):
-            await update.message.reply_text(NEGATIVE_REPLY)
-            user_states[uid] = "end"
-        elif any(w in text for w in POSITIVE_KEYWORDS):
-            await update.message.reply_text(QUESTIONS)
-            user_states[uid] = "questions_sent"
-        return
+    stage = sess["stage"]
 
-    if state == "questions_sent":
-        await update.message.reply_text(FINAL_REPLY)
-        user_states[uid] = "end"
-        return
+    if stage == "initial":
+        if any(w in lower_text for w in NEGATIVE_KEYWORDS):
+            sess["stage"] = "end"
+            return await update.message.reply_text(NEGATIVE_REPLY)
+        if any(w in lower_text for w in POSITIVE_KEYWORDS):
+            sess["stage"] = "job_sent"
+            return await update.message.reply_text(JOB_DESCRIPTION)
+        return await update.message.reply_text("Proszę odpowiedzieć tak/ні/net/no")
+
+    if stage == "job_sent":
+        if any(w in lower_text for w in NEGATIVE_KEYWORDS):
+            sess["stage"] = "end"
+            return await update.message.reply_text(NEGATIVE_REPLY)
+        if any(w in lower_text for w in POSITIVE_KEYWORDS):
+            # dzielimy QUESTIONS na listę 11 pytań
+            lines = [q.strip() for q in QUESTIONS.splitlines() if q.strip()]
+            sess["stage"] = "asking"
+            sess["questions"] = lines
+            sess["q_idx"] = 0
+            return await update.message.reply_text(lines[0])
+        return await update.message.reply_text("Proszę odpowiedzieć tak/ні/net/no")
+
+    if stage == "asking":
+        idx = sess["q_idx"] + 1
+        questions = sess["questions"]
+        if idx < len(questions):
+            sess["q_idx"] = idx
+            return await update.message.reply_text(questions[idx])
+        else:
+            sess["stage"] = "end"
+            return await update.message.reply_text(FINAL_REPLY)
+
+    # po zakończeniu nic
+    return
 
 if __name__ == "__main__":
-    # 1) Usuń stare webhooki, żeby Telegram nie blokował polling’u
-    tmp_app = ApplicationBuilder().token(TOKEN).build()
-    tmp_app.bot.delete_webhook()
+    # usuwamy stare webhooki
+    tmp = ApplicationBuilder().token(TOKEN).build()
+    tmp.bot.delete_webhook()
 
-    # 2) Teraz budujemy i uruchamiamy jedną aplikację pollingową
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
     print("🤖 RekrutacjaSharryBot: polling uruchomiony.")
     app.run_polling()
