@@ -11,20 +11,21 @@ from telegram.ext import (
     filters,
 )
 
-# ── TELEGRAM ────────────────────────────────────────────────────────────────
-TOKEN = os.environ["TELEGRAM_TOKEN"]  # ustawione w Render jako Env Var
+# ── 1) TELEGRAM ───────────────────────────────────────────────────────────────
+TOKEN = os.environ["TELEGRAM_TOKEN"]  # ustaw w Render > Environment
 
-# ── GOOGLE SHEETS ───────────────────────────────────────────────────────────
+# ── 2) GOOGLE SHEETS ─────────────────────────────────────────────────────────
+# Render montuje Twój Secret File pod /etc/secrets/<Filename>
 GOOGLE_SECRET_FILE = "/etc/secrets/GOOGLE_CREDENTIALS"
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
 creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_SECRET_FILE, SCOPES)
-client = gspread.authorize(creds)
-sheet = client.open("RekrutacjaSharryBot").sheet1  # upewnij się, że nazwa arkusza się zgadza
+gc = gspread.authorize(creds)
+sheet = gc.open("RekrutacjaSharryBot").sheet1  # sprawdź nazwę arkusza
 
-# ── REKRUTACJA ─────────────────────────────────────────────────────────────
+# ── 3) REKRUTACJA ────────────────────────────────────────────────────────────
 NEGATIVE_KEYWORDS = ["ні", "нет", "нецікаво", "ni", "net", "no"]
 POSITIVE_KEYWORDS = ["так", "да", "цікаво", "tak", "da", "yes"]
 user_states = {}
@@ -48,28 +49,36 @@ NEGATIVE_REPLY = (
 )
 
 JOB_DESCRIPTION = """\
-Ваша основна роль буде полягати в опрацюванні вхідних запитів, дзвінків та повідомлень...
-(pełny tekst opisu — wklej swój)
-Чи буде to для вас цікаво?
+Ваша основна роль буде полягати w op…  # wklej pełny opis
+Чи będzie це dla вас цікаво?
 """
 
 QUESTIONS = """\
-Чудово! 😊 Розкажіть кілька слів про себе та дайте відповіді na pytania:
-(pełny zestaw pytań — wklej swój)
+Чудово! 😊 Далі:
+- Z którego miasta jesteś?
+- Ile masz lat?
+- Wykształcenie?
+- Doświadczenie zdalne?
+- CRM?
+- Telefonia / call-center?
+- Dostęp do komputera i internetu?
+- Ile godzin dziennie?
+- Kiedy możesz pracować?
+- Numer kontaktowy?
 """
 
 FINAL_REPLY = """\
 Дякуємо за ваші відповіді. Ви дуже цікавий кандидат :)
-Якщо хочете доступ до навчальних матеріалів — надішліть запит na hr@sharry.eu
+Aby otrzymać materiały szkoleniowe, wyślij request na hr@sharry.eu
 """
 
-# ── LOGOWANIE DO SHEETS ────────────────────────────────────────────────────
+# ── 4) LOGOWANIE DO SHEETS ─────────────────────────────────────────────────
 def log_user_response(user_id: int, username: str, text: str):
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    sheet.append_row([timestamp, str(user_id), username or "-", text])
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sheet.append_row([ts, str(user_id), username or "-", text])
 
 
-# ── HANDLERY ───────────────────────────────────────────────────────────────
+# ── 5) HANDLERY ─────────────────────────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user_states[uid] = "initial"
@@ -81,7 +90,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.lower()
     username = update.effective_user.username or "-"
 
-    # Zapisz do Sheets
+    # logujemy każdą wiadomość
     log_user_response(uid, username, text)
 
     state = user_states.get(uid, "initial")
@@ -110,15 +119,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-# ── START APLIKACJI ─────────────────────────────────────────────────────────
+# ── 6) START APLIKACJI ───────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # 0) Usuń wszelkie stare webhooki, aby uniknąć konfliktu z pollingiem
-    temp_app = ApplicationBuilder().token(TOKEN).build()
-    temp_app.bot.delete_webhook()
+    # a) usuwamy stare webhooki, żeby nie było konfliktu z pollingiem
+    tmp = ApplicationBuilder().token(TOKEN).build()
+    tmp.bot.delete_webhook()
 
-    # 1) Zbuduj właściwą aplikację i uruchom polling
+    # b) uruchamiamy polling jedną instancją
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🤖 RekrutacjaSharryBot działa...")
+
+    print("🤖 RekrutacjaSharryBot działa (polling)…")
     app.run_polling()
