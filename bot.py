@@ -1,25 +1,25 @@
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
-import datetime
 import os
-
+import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder,
+    ContextTypes,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 
 # ── TELEGRAM ────────────────────────────────────────────────────────────────
-TOKEN = os.environ["TELEGRAM_TOKEN"]  # ustawione jako Env Var w Render
+TOKEN = os.environ["TELEGRAM_TOKEN"]  # ustawione w Render jako Env Var
 
 # ── GOOGLE SHEETS ───────────────────────────────────────────────────────────
-# Render montuje Twój Secret File pod /etc/secrets/<Filename>
-# Jeśli nazwałeś plik GOOGLE_CREDENTIALS, to ścieżka to właśnie:
 GOOGLE_SECRET_FILE = "/etc/secrets/GOOGLE_CREDENTIALS"
-
-# Używamy aktualnych scope'ów dla Sheets i Drive:
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
-
 creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_SECRET_FILE, SCOPES)
 client = gspread.authorize(creds)
 sheet = client.open("RekrutacjaSharryBot").sheet1  # upewnij się, że nazwa arkusza się zgadza
@@ -50,17 +50,17 @@ NEGATIVE_REPLY = (
 JOB_DESCRIPTION = """\
 Ваша основна роль буде полягати в опрацюванні вхідних запитів, дзвінків та повідомлень...
 (pełny tekst opisu — wklej swój)
-Чи буде це для вас цікаво?
+Чи буде to для вас цікаво?
 """
 
 QUESTIONS = """\
-Чудово! 😊 Розкажіть кілька слів o собі та дайте відповіді на питання, ...
+Чудово! 😊 Розкажіть кілька слів про себе та дайте відповіді na pytania:
 (pełny zestaw pytań — wklej swój)
 """
 
 FINAL_REPLY = """\
 Дякуємо за ваші відповіді. Ви дуже цікавий кандидат :)
-Якщо ви хочете доступ до навчальних матеріалів — надішліть запит на hr@sharry.eu
+Якщо хочете доступ до навчальних матеріалів — надішліть запит na hr@sharry.eu
 """
 
 # ── LOGOWANIE DO SHEETS ────────────────────────────────────────────────────
@@ -68,22 +68,24 @@ def log_user_response(user_id: int, username: str, text: str):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     sheet.append_row([timestamp, str(user_id), username or "-", text])
 
+
 # ── HANDLERY ───────────────────────────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user_states[uid] = "initial"
     await update.message.reply_text(INITIAL_MESSAGE)
 
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     text = update.message.text.lower()
     username = update.effective_user.username or "-"
-    
+
     # Zapisz do Sheets
     log_user_response(uid, username, text)
-    
+
     state = user_states.get(uid, "initial")
-    
+
     if state == "initial":
         if any(w in text for w in NEGATIVE_KEYWORDS):
             await update.message.reply_text(NEGATIVE_REPLY)
@@ -105,9 +107,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if state == "questions_sent":
         await update.message.reply_text(FINAL_REPLY)
         user_states[uid] = "end"
+        return
+
 
 # ── START APLIKACJI ─────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    # 0) Usuń wszelkie stare webhooki, aby uniknąć konfliktu z pollingiem
+    temp_app = ApplicationBuilder().token(TOKEN).build()
+    temp_app.bot.delete_webhook()
+
+    # 1) Zbuduj właściwą aplikację i uruchom polling
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
